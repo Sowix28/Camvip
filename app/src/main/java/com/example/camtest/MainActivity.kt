@@ -74,29 +74,45 @@ class MainActivity : Activity() {
             "<Nonce EncodingType=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-soap-message-security-1.0#Base64Binary\">$n64</Nonce>" +
             "<Created xmlns=\"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-utility-1.0.xsd\">$created</Created>" +
             "</UsernameToken></Security></s:Header><s:Body>$body</s:Body></s:Envelope>"
+        val bytes = env.toByteArray()
         val c = URL(url).openConnection() as HttpURLConnection
         c.requestMethod = "POST"; c.doOutput = true; c.connectTimeout = 5000; c.readTimeout = 8000
         c.setRequestProperty("Content-Type", "application/soap+xml; charset=utf-8")
-        c.outputStream.use { it.write(env.toByteArray()) }
+        c.setRequestProperty("Connection", "close")
+        c.setFixedLengthStreamingMode(bytes.size)
+        c.outputStream.use { it.write(bytes) }
         val code = c.responseCode
         val text = (if (code < 400) c.inputStream else c.errorStream)?.bufferedReader()?.readText() ?: ""
         if (code >= 400) throw RuntimeException("HTTP $code: " + text.take(300))
         return text
     }
 
+    private fun statusBody() =
+        "<GetStatus xmlns=\"http://www.onvif.org/ver20/ptz/wsdl\"><ProfileToken>$profile</ProfileToken></GetStatus>"
+
     private fun connect() {
         val dev = "http://$ip:$port/onvif/device_service"
         val caps = soap(dev, "<GetCapabilities xmlns=\"http://www.onvif.org/ver10/device/wsdl\"><Category>All</Category></GetCapabilities>")
         val rx = { tag: String -> Regex("<(?:\\w+:)?$tag>\\s*<(?:\\w+:)?XAddr>([^<]+)<").find(caps)?.groupValues?.get(1) }
         val media = rx("Media") ?: throw RuntimeException("Media adresi yok")
-        ptzUrl = rx("PTZ") ?: throw RuntimeException("PTZ adresi yok (kamera PTZ servisi bildirmiyor)")
         val prof = soap(media, "<GetProfiles xmlns=\"http://www.onvif.org/ver10/media/wsdl\"/>")
         profile = Regex("Profiles[^>]*token=\"([^\"]+)\"").find(prof)?.groupValues?.get(1)
             ?: throw RuntimeException("Profil bulunamadi")
+        val base = "http://$ip:$port/onvif"
+        val cands = listOfNotNull(
+            rx("PTZ"), "$base/ptz_service", "$base/PTZ", "$base/ptz", "$base/ptz_service/", dev
+        ).distinct()
+        var found = ""
+        for (u in cands) {
+            try { soap(u, statusBody()); found = u; break }
+            catch (e: Exception) { log("PTZ adresi olmadi: $u\n" + (e.message ?: "").take(120)) }
+        }
+        if (found.isEmpty()) throw RuntimeException("Calisan PTZ adresi bulunamadi")
+        ptzUrl = found
         log("BAGLANDI\nPTZ: $ptzUrl\nProfil: $profile")
     }
 
-    private fun need() { if (profile.isEmpty()) connect() }
+    private fun need() { if (profile.isEmpty() || ptzUrl.isEmpty()) connect() }
 
     private fun savePreset() {
         need()
@@ -117,7 +133,7 @@ class MainActivity : Activity() {
 
     private fun status() {
         need()
-        val r = soap(ptzUrl, "<GetStatus xmlns=\"http://www.onvif.org/ver20/ptz/wsdl\"><ProfileToken>$profile</ProfileToken></GetStatus>")
+        val r = soap(ptzUrl, statusBody())
         val m = Regex("PanTilt[^>]*x=\"([^\"]+)\"[^>]*y=\"([^\"]+)\"").find(r)
         if (m != null) log("Konum pan=${m.groupValues[1]} tilt=${m.groupValues[2]}")
         else log("Konum bilgisi YOK. Ham cevap:\n" + r.take(600))
