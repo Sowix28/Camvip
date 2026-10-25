@@ -57,7 +57,7 @@ class MainActivity : Activity() {
         minE = edit("Otomatik donus araligi (dk)", "min", "3", num = true)
         fun btn(t: String, f: () -> Unit) = Button(this).apply { text = t; setOnClickListener { f() }; root.addView(this) }
         btn("1) Baglan") { run { connect() } }
-        btn("2) Sola cevir (1 sn)") { run { move(-0.5, 0.0, 1000); log("Sola cevirme gonderildi") } }
+        btn("2) Sola cevir (3 sn)") { run { move(-0.5, 0.0, 3000); log("Sola cevirme bitti") } }
         btn("3) Su anki konumu HOME kaydet") { run { homeSet() } }
         btn("4) HOME'a git") { run { homeGo() } }
         btn("5) Kapiya git (sureli yontem)") { run { goDoor() } }
@@ -134,8 +134,12 @@ class MainActivity : Activity() {
 
     private fun move(x: Double, y: Double, ms: Long) {
         need()
-        soap(ptzUrl, "<ContinuousMove xmlns=\"$PTZ\"><ProfileToken>$profile</ProfileToken><Velocity><PanTilt x=\"$x\" y=\"$y\" xmlns=\"http://www.onvif.org/ver10/schema\"/></Velocity></ContinuousMove>")
-        Thread.sleep(ms)
+        val body = "<ContinuousMove xmlns=\"$PTZ\"><ProfileToken>$profile</ProfileToken><Velocity><PanTilt x=\"$x\" y=\"$y\" xmlns=\"http://www.onvif.org/ver10/schema\"/></Velocity></ContinuousMove>"
+        val end = System.currentTimeMillis() + ms
+        do {
+            soap(ptzUrl, body)
+            Thread.sleep(300)
+        } while (System.currentTimeMillis() < end)
         soap(ptzUrl, "<Stop xmlns=\"$PTZ\"><ProfileToken>$profile</ProfileToken><PanTilt>true</PanTilt><Zoom>false</Zoom></Stop>")
     }
 
@@ -162,7 +166,8 @@ class MainActivity : Activity() {
     private fun goDoor() {
         need()
         log("Kapiya donuluyor...")
-        move(-0.5, -0.5, slamS * 1000L)
+        move(-0.5, 0.0, slamS * 1000L)
+        move(0.0, -0.5, maxOf(4, slamS / 2) * 1000L)
         move(0.5, 0.0, panMs.toLong())
         move(0.0, 0.5, tiltMs.toLong())
         log("Kapiya donus bitti")
